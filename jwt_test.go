@@ -2,7 +2,6 @@ package jwt
 
 import (
 	"testing"
-	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"time"
@@ -21,14 +20,6 @@ func TestConfigure(t *testing.T){
 	)
 	if err != nil{
 		t.Error("Expected err nil, got err ", err)
-	}
-	a, _ := ioutil.ReadFile("tests/privkey.pem")
-	if string(a[:len(a)]) != string(std.conf.privateKey[:len(std.conf.privateKey)]) {
-		t.Error("Expected privateKey = see privkey.pem content, got ", std.conf.privateKey )
-	}
-	a, _ = ioutil.ReadFile("tests/pubkey.pem")
-	if string(a[:len(a)]) != string(std.conf.publicKey[:len(std.conf.publicKey)]) {
-		t.Error("Expected publicKey = see pubkey.pem content, got ", std.conf.publicKey )
 	}
 	if std.conf.algorithm != "RS256" {
 		t.Error("Expected algorithm = RS256, got ", std.conf.algorithm )

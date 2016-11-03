@@ -1,6 +1,7 @@
 package jwt
 
 import (
+	"crypto/rsa"
 	"errors"
 	gojwt "github.com/dgrijalva/jwt-go"
 	"github.com/gorilla/sessions"
@@ -13,8 +14,8 @@ import (
 type JwtConf struct {
 	privateKeyFile         string
 	publicKeyFile          string
-	privateKey             []byte
-	publicKey              []byte
+	privateKey             *rsa.PrivateKey
+	publicKey              *rsa.PublicKey
 	algorithm              string
 	sessionName            string
 	sessionTimeout         int
@@ -26,6 +27,11 @@ type Jwt struct {
 	conf *JwtConf
 }
 
+type JwtClaims struct {
+	*gojwt.StandardClaims
+	User map[string]interface{}
+}
+
 var store = sessions.NewCookieStore(securecookie.GenerateRandomKey(64))
 
 var std = &Jwt{
@@ -33,8 +39,8 @@ var std = &Jwt{
 	conf: &JwtConf{
 		privateKeyFile: "",
 		publicKeyFile: "",
-		privateKey: []byte("secret"),
-		publicKey: []byte("secret"),
+		//privateKey *rsa.PrivateKey,
+		//publicKey *rsa.PublicKey,
 		algorithm: "RS256",
 		sessionName  : "secret",
 		sessionTimeout:  3000,
@@ -63,10 +69,18 @@ func (j *Jwt) Configure (cnf map[string]interface{}) error {
 	if j.conf.sessionRefreshInterval, ok = cnf["sessionRefreshInterval"].(int); !ok {
 		return errors.New("session refresh interval not specified")
 	}
-	if j.conf.privateKey, err = ioutil.ReadFile(j.conf.privateKeyFile); err != nil {
+	var privKey []byte
+	var pubKey []byte
+	if privKey, err = ioutil.ReadFile(j.conf.privateKeyFile); err != nil {
 		return err
 	}
-	if j.conf.publicKey, err = ioutil.ReadFile(j.conf.publicKeyFile); err != nil {
+	if j.conf.privateKey, err = gojwt.ParseRSAPrivateKeyFromPEM(privKey); err != nil {
+		return err
+	}
+	if pubKey, err = ioutil.ReadFile(j.conf.publicKeyFile); err != nil {
+        return err
+    }
+	if j.conf.publicKey, err = gojwt.ParseRSAPublicKeyFromPEM(pubKey); err != nil {
 		return err
 	}
 	std.initialized = true
@@ -81,11 +95,17 @@ func Configure(cnf map[string]interface{}) error {
 }
 
 func CreateToken(user map[string]interface{}, w http.ResponseWriter, r *http.Request) (string, error) {
-
 	t := gojwt.New(gojwt.GetSigningMethod(std.conf.algorithm))
 	user["exp"] = float64(time.Now().Add(time.Second * time.Duration(std.conf.sessionTimeout)).Unix())
-	
-	t.Claims["user"] = user
+	t.Claims = &JwtClaims{
+		&gojwt.StandardClaims{
+			// set the expire time
+			// see http://tools.ietf.org/html/draft-ietf-oauth-json-web-token-20#section-4.1.4
+			ExpiresAt: time.Now().Add(time.Second * time.Duration(std.conf.sessionTimeout)).Unix(),
+		},
+		user,
+	}
+	//t.Claims["user"] = user
 	tokenString, err := t.SignedString(std.conf.privateKey)
 	session, _ := store.Get(r, std.conf.sessionName)
 	session.Values["token"] = tokenString
@@ -106,12 +126,14 @@ func ParseToken(w http.ResponseWriter, r *http.Request) (map[string]interface{},
 		return nil, errors.New("Invalid cookie")
 	}
 	var user = make(map[string]interface{})
-	token, err := gojwt.Parse(tokenString, func(token *gojwt.Token) (interface{}, error) {
+	token, err := gojwt.ParseWithClaims(tokenString, &JwtClaims{}, func(token *gojwt.Token) (interface{}, error) {
 		return std.conf.publicKey, nil
 	})
 
 	if err == nil && token.Valid {
-		user = token.Claims["user"].(map[string]interface{})
+		claims := token.Claims.(*JwtClaims)
+		user = claims.User
+		//user = token.Claims["user"].(map[string]interface{})
 		//user["exp"] = user["exp"].(int64)
 		er := RefreshToken(user, w, r)
 		if er != nil {
@@ -142,7 +164,15 @@ func RefreshToken(user map[string]interface{}, w http.ResponseWriter, r *http.Re
 	t := gojwt.New(gojwt.GetSigningMethod(std.conf.algorithm))
 	user["exp"] = time.Now().Add(time.Second * time.Duration(std.conf.sessionTimeout)).Unix()
 
-	t.Claims["user"] = user
+	t.Claims = &JwtClaims{
+		&gojwt.StandardClaims{
+			// set the expire time
+			// see http://tools.ietf.org/html/draft-ietf-oauth-json-web-token-20#section-4.1.4
+			ExpiresAt: time.Now().Add(time.Second * time.Duration(std.conf.sessionTimeout)).Unix(),
+		},
+		user,
+	}
+	//t.Claims["user"] = user
 
 	tokenString, err := t.SignedString(std.conf.privateKey)
 
